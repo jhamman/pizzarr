@@ -91,6 +91,14 @@ extract_semver <- function(ver) {
 # get the MSRV
 msrv <- extract_semver(rustc_ver)
 
+# The optional icechunk feature (icechunk 2.3) needs a newer rustc than the
+# rest of the package, so raise the MSRV only when it is requested.
+icechunk_msrv <- "1.95"
+if (grepl("(^|,)[[:space:]]*icechunk[[:space:]]*(,|$)", Sys.getenv("PIZZARR_FEATURES")) &&
+    !is.na(msrv) && utils::compareVersion(icechunk_msrv, msrv) == 1) {
+  msrv <- icechunk_msrv
+}
+
 # extract current version
 current_rust_version <- extract_semver(rustc_version)
 

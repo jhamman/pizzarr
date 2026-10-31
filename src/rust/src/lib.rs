@@ -33,6 +33,8 @@ mod create;
 mod dtype_dispatch;
 mod error;
 mod http_config;
+#[cfg(feature = "icechunk")]
+mod icechunk_store;
 mod info;
 mod metadata;
 mod retrieve;
@@ -92,6 +94,9 @@ pub(crate) fn compiled_features() -> Vec<String> {
 
     #[cfg(feature = "gcs")]
     features.push("gcs".into());
+
+    #[cfg(feature = "icechunk")]
+    features.push("icechunk".into());
 
     features
 }
@@ -210,6 +215,115 @@ fn zarrs_get_key(store_url: &str, key: &str) -> extendr_api::Result<Robj> {
     match store_get(&store, &store_key, store_url, key)? {
         Some(bytes) => Ok(Raw::from_bytes(&bytes).into()),
         None => Ok(().into()),
+    }
+}
+
+/// List the direct children of a prefix in a store.
+///
+/// Returns a named list with `keys` (child keys) and `prefixes` (child
+/// prefixes, without the trailing `/`), both relative to `prefix`. Used by
+/// `IcechunkStore$listdir()`; works for any listable store.
+///
+/// # Errors
+///
+/// Returns an R error if the store cannot be opened, cannot list (HTTP),
+/// or a storage I/O error occurs.
+/// @param store_url Filesystem path, URL or store identifier.
+/// @param prefix Prefix within the store, `""` for the root.
+/// @noRd
+#[extendr]
+fn zarrs_list_dir(store_url: &str, prefix: &str) -> extendr_api::Result<List> {
+    let store = store_open::open_store(store_url)?;
+    let listable = store
+        .as_listable()
+        .ok_or_else(|| error::PizzarrError::StoreOpen {
+            url: store_url.to_string(),
+            reason: "store does not support listing".to_string(),
+        })?;
+    let trimmed = prefix.trim_matches('/');
+    let prefix_str = if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("{trimmed}/")
+    };
+    let io_err = |reason: String| error::PizzarrError::StoreOpen {
+        url: store_url.to_string(),
+        reason,
+    };
+    let store_prefix =
+        zarrs_storage::StorePrefix::new(prefix_str.clone()).map_err(|e| io_err(e.to_string()))?;
+    let listing = listable
+        .list_dir(&store_prefix)
+        .map_err(|e| io_err(e.to_string()))?;
+    let strip = |s: &str| {
+        s.strip_prefix(&prefix_str)
+            .unwrap_or(s)
+            .trim_end_matches('/')
+            .to_string()
+    };
+    let keys: Vec<String> = listing.keys().iter().map(|k| strip(k.as_str())).collect();
+    let prefixes: Vec<String> = listing
+        .prefixes()
+        .iter()
+        .map(|p| strip(p.as_str()))
+        .collect();
+    Ok(list!(keys = keys, prefixes = prefixes))
+}
+
+/// Open a read-only Icechunk session and cache it.
+///
+/// Opens the repository at `url`, starts a read-only session at the
+/// given branch, tag or snapshot, and caches it under the returned store
+/// identifier (`icechunk+<url>@<kind>:<value>`). Always reopens, so a
+/// branch resolves to its current tip. Called by `IcechunkStore$new()`.
+///
+/// # Errors
+///
+/// Returns an R error for a bad URL or options, an unknown ref, a
+/// repository that cannot be opened, or a build without the `icechunk`
+/// feature.
+/// @param url Repository URL or local path.
+/// @param ref_kind One of `"branch"`, `"tag"`, `"snapshot"`.
+/// @param ref_value Branch or tag name, or snapshot id.
+/// @param storage_options_json JSON object of storage options.
+/// @param virtual_chunk_containers_json JSON object mapping container
+///   prefixes to their options.
+/// @noRd
+#[extendr]
+#[allow(unused_variables)]
+fn zarrs_icechunk_open(
+    url: &str,
+    ref_kind: &str,
+    ref_value: &str,
+    storage_options_json: &str,
+    virtual_chunk_containers_json: &str,
+) -> extendr_api::Result<String> {
+    #[cfg(feature = "icechunk")]
+    {
+        let reference =
+            icechunk_store::RefSpec::parse(ref_kind, ref_value).map_err(|e| match e {
+                error::PizzarrError::IcechunkOpen { reason, .. } => {
+                    error::PizzarrError::IcechunkOpen {
+                        url: url.to_string(),
+                        reason,
+                    }
+                }
+                other => other,
+            })?;
+        Ok(icechunk_store::open_icechunk(
+            url,
+            &reference,
+            storage_options_json,
+            virtual_chunk_containers_json,
+        )?)
+    }
+
+    #[cfg(not(feature = "icechunk"))]
+    {
+        Err(error::PizzarrError::FeatureNotCompiled {
+            feature: "icechunk".to_string(),
+        }
+        .into())
     }
 }
 
@@ -379,11 +493,13 @@ fn store_get(
 ) -> std::result::Result<zarrs_storage::MaybeBytes, error::PizzarrError> {
     use zarrs_storage::ReadableStorageTraits;
     let readable = store.as_readable();
-    readable.get(key).map_err(|e| error::PizzarrError::ArrayOpen {
-        url: store_url.to_string(),
-        path: path.to_string(),
-        reason: e.to_string(),
-    })
+    readable
+        .get(key)
+        .map_err(|e| error::PizzarrError::ArrayOpen {
+            url: store_url.to_string(),
+            path: path.to_string(),
+            reason: e.to_string(),
+        })
 }
 
 // Macro to generate exports.
@@ -395,6 +511,8 @@ extendr_module! {
     fn zarrs_node_exists;
     fn zarrs_get_key;
     fn zarrs_close_store;
+    fn zarrs_list_dir;
+    fn zarrs_icechunk_open;
     fn zarrs_open_array_metadata;
     fn zarrs_runtime_info;
     fn zarrs_set_codec_concurrent_target;

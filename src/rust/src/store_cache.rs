@@ -11,7 +11,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use zarrs_storage::{ReadableStorage, ReadableWritableListableStorage};
+use zarrs_storage::{
+    ListableStorageTraits, ReadableListableStorage, ReadableStorage,
+    ReadableWritableListableStorage,
+};
 
 use crate::error::PizzarrError;
 
@@ -19,13 +22,18 @@ use crate::error::PizzarrError;
 ///
 /// Filesystem stores implement all three trait families (Readable,
 /// Writable, Listable) and get stored as `ReadWriteList`. HTTP stores
-/// are read-only and get stored as `ReadOnly`.
+/// are read-only and get stored as `ReadOnly`. Read-only stores that can
+/// list (Icechunk sessions) get stored as `ReadList`.
 #[derive(Clone)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum StorageEntry {
     /// Full read-write-list store (e.g., `FilesystemStore`).
     ReadWriteList(ReadableWritableListableStorage),
     /// Read-only store (e.g., `HTTPStore`).
     ReadOnly(ReadableStorage),
+    /// Read-only, listable store (e.g., a read-only Icechunk session).
+    #[allow(dead_code)]
+    ReadList(ReadableListableStorage),
 }
 
 impl StorageEntry {
@@ -37,6 +45,16 @@ impl StorageEntry {
         match self {
             Self::ReadWriteList(s) => Arc::clone(s) as ReadableStorage,
             Self::ReadOnly(s) => Arc::clone(s),
+            Self::ReadList(s) => Arc::clone(s) as ReadableStorage,
+        }
+    }
+
+    /// Get a listable storage handle, or `None` if the store cannot list.
+    pub(crate) fn as_listable(&self) -> Option<Arc<dyn ListableStorageTraits>> {
+        match self {
+            Self::ReadWriteList(s) => Some(Arc::clone(s) as Arc<dyn ListableStorageTraits>),
+            Self::ReadList(s) => Some(Arc::clone(s) as Arc<dyn ListableStorageTraits>),
+            Self::ReadOnly(_) => None,
         }
     }
 
@@ -50,7 +68,7 @@ impl StorageEntry {
     ) -> std::result::Result<ReadableWritableListableStorage, PizzarrError> {
         match self {
             Self::ReadWriteList(s) => Ok(Arc::clone(s)),
-            Self::ReadOnly(_) => Err(PizzarrError::StoreReadOnly {
+            Self::ReadOnly(_) | Self::ReadList(_) => Err(PizzarrError::StoreReadOnly {
                 url: url.to_string(),
             }),
         }
@@ -101,6 +119,11 @@ mod inner {
         cache.remove(normalized).is_some()
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn replace(normalized: &str, entry: StorageEntry) {
+        STORE_CACHE.write().insert(normalized.to_string(), entry);
+    }
+
     pub(crate) fn entry_count() -> usize {
         let cache = STORE_CACHE.read();
         cache.len()
@@ -143,6 +166,13 @@ mod inner {
 
     pub(crate) fn remove(normalized: &str) -> bool {
         STORE_CACHE.with(|cache| cache.borrow_mut().remove(normalized).is_some())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn replace(normalized: &str, entry: StorageEntry) {
+        STORE_CACHE.with(|cache| {
+            cache.borrow_mut().insert(normalized.to_string(), entry);
+        });
     }
 
     pub(crate) fn entry_count() -> usize {
@@ -194,6 +224,16 @@ where
 pub(crate) fn remove(url: &str) -> bool {
     let key = normalize_store_url(url);
     inner::remove(&key)
+}
+
+/// Insert a store into the cache, replacing any existing entry.
+///
+/// Used by stores that are opened explicitly rather than from a URL
+/// (Icechunk sessions), so reopening picks up a new branch tip.
+#[allow(dead_code)]
+pub(crate) fn replace(url: &str, entry: StorageEntry) {
+    let key = normalize_store_url(url);
+    inner::replace(&key, entry);
 }
 
 /// Return the number of entries in the store cache.

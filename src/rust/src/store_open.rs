@@ -26,6 +26,11 @@ pub(crate) fn open_store(url: &str) -> Result<StorageEntry, PizzarrError> {
     store_cache::get_or_insert(url, |_normalized_url| {
         let trimmed = url.trim_end_matches('/');
 
+        // --- Icechunk (opened explicitly by IcechunkStore$new()) ---
+        if trimmed.starts_with("icechunk+") {
+            return Err(icechunk_not_open(trimmed));
+        }
+
         // --- HTTP/HTTPS ---
         if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
             return open_http_store(trimmed);
@@ -54,16 +59,32 @@ pub(crate) fn open_store(url: &str) -> Result<StorageEntry, PizzarrError> {
     })
 }
 
+/// Icechunk sessions are cached by `zarrs_icechunk_open()`, never opened
+/// from their identifier. Reaching here means the session was closed, or
+/// the `icechunk` feature is missing.
+fn icechunk_not_open(id: &str) -> PizzarrError {
+    if cfg!(feature = "icechunk") {
+        PizzarrError::StoreOpen {
+            url: id.to_string(),
+            reason: "Icechunk session is not open; create the store with IcechunkStore$new()"
+                .to_string(),
+        }
+    } else {
+        PizzarrError::FeatureNotCompiled {
+            feature: "icechunk".to_string(),
+        }
+    }
+}
+
 /// Open a filesystem store.
 fn open_filesystem_store(url: &str, path: &str) -> Result<StorageEntry, PizzarrError> {
     #[cfg(feature = "filesystem")]
     {
-        let store = zarrs_filesystem::FilesystemStore::new(path).map_err(|e| {
-            PizzarrError::StoreOpen {
+        let store =
+            zarrs_filesystem::FilesystemStore::new(path).map_err(|e| PizzarrError::StoreOpen {
                 url: url.to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
         Ok(StorageEntry::ReadWriteList(Arc::new(store)))
     }
 
@@ -171,15 +192,19 @@ fn wrap_object_store(
 
     if prefix.is_empty() {
         let async_store = Arc::new(AsyncObjectStore::new(store));
-        let sync_store =
-            Arc::new(AsyncToSyncStorageAdapter::new(async_store, crate::runtime::TokioBlockOn));
+        let sync_store = Arc::new(AsyncToSyncStorageAdapter::new(
+            async_store,
+            crate::runtime::TokioBlockOn,
+        ));
         Ok(StorageEntry::ReadWriteList(sync_store))
     } else {
         let prefix_path = object_store::path::Path::from(prefix);
         let prefix_store = PrefixStore::new(store, prefix_path);
         let async_store = Arc::new(AsyncObjectStore::new(prefix_store));
-        let sync_store =
-            Arc::new(AsyncToSyncStorageAdapter::new(async_store, crate::runtime::TokioBlockOn));
+        let sync_store = Arc::new(AsyncToSyncStorageAdapter::new(
+            async_store,
+            crate::runtime::TokioBlockOn,
+        ));
         Ok(StorageEntry::ReadWriteList(sync_store))
     }
 }

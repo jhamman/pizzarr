@@ -86,6 +86,24 @@ pub(crate) enum PizzarrError {
         feature: String,
     },
 
+    /// Failed to open an Icechunk repository (bad URL, options or storage).
+    #[error("IcechunkOpen({url}): {reason}")]
+    IcechunkOpen {
+        /// Repository URL or path.
+        url: String,
+        /// Description of what went wrong.
+        reason: String,
+    },
+
+    /// The requested branch, tag or snapshot does not exist.
+    #[error("IcechunkRefNotFound({url}): {reference} not found in the repository")]
+    IcechunkRefNotFound {
+        /// Repository URL or path.
+        url: String,
+        /// The ref that was requested, e.g. `branch "dev"`.
+        reference: String,
+    },
+
     /// An I/O error from the underlying system.
     #[error("Io: {0}")]
     Io(#[from] std::io::Error),
