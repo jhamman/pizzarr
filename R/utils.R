@@ -4,7 +4,8 @@ utils::globalVariables(c(
   # defined in extendr-wrappers.R (r-universe) or absent (CRAN)
   "zarrs_create_array", "zarrs_runtime_info",
   "zarrs_set_nthreads", "zarrs_set_codec_concurrent_target",
-  "zarrs_set_http_batch_range_requests"
+  "zarrs_set_http_batch_range_requests",
+  "zarrs_get_key", "zarrs_close_store", "zarrs_list_dir", "zarrs_icechunk_open"
 ))
 
 #' pizzarr demo data

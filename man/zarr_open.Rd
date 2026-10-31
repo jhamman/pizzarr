@@ -11,7 +11,8 @@ zarr_open(store = NA, mode = NA, path = NA, ...)
 an \verb{http://} or \verb{https://} URL becomes an \link{HttpStore}, an \verb{s3://} URL
 becomes an \link{S3Store}, a \verb{gs://} URL becomes a \link{GcsStore}, and anything
 else is treated as a filesystem path and becomes a \link{DirectoryStore}.
-\code{NA} creates a \link{MemoryStore}. Remote stores open read-only.
+\code{NA} creates a \link{MemoryStore}. Remote stores and \link{IcechunkStore} open
+read-only.
 See \code{vignette("remote-stores")}.}
 
 \item{mode}{: \code{'r', 'r+', 'a', 'w', 'w-'}, optional

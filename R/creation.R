@@ -726,7 +726,8 @@ zarr_save_array <- function(store, arr, ...) {
 #'   an `http://` or `https://` URL becomes an [HttpStore], an `s3://` URL
 #'   becomes an [S3Store], a `gs://` URL becomes a [GcsStore], and anything
 #'   else is treated as a filesystem path and becomes a [DirectoryStore].
-#'   `NA` creates a [MemoryStore]. Remote stores open read-only.
+#'   `NA` creates a [MemoryStore]. Remote stores and [IcechunkStore] open
+#'   read-only.
 #'   See `vignette("remote-stores")`.
 #' @param mode : \code{'r', 'r+', 'a', 'w', 'w-'}, optional
 #'     Persistence mode: 'r' means read only (must exist); 'r+' means
@@ -744,7 +745,7 @@ zarr_open <- function(store = NA, mode = NA, path = NA, ...) {
     
     if(is_na(mode)) {
         mode <- "a"
-        if(inherits(store, c("HttpStore", "S3Store", "GcsStore")))
+        if(inherits(store, c("HttpStore", "S3Store", "GcsStore", "IcechunkStore")))
           mode <- "r"
     }
 

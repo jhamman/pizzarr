@@ -23,6 +23,7 @@ can_use_zarrs <- function(indexer, store) {
   features <- pizzarr_compiled_features()
   if (inherits(store, "S3Store") && !("s3" %in% features)) return(FALSE)
   if (inherits(store, "GcsStore") && !("gcs" %in% features)) return(FALSE)
+  if (inherits(store, "IcechunkStore") && !("icechunk" %in% features)) return(FALSE)
 
   # BasicIndexer with contiguous SliceDimIndexer or IntDimIndexer on every dim
   if (!inherits(indexer, "BasicIndexer")) return(FALSE)
@@ -50,6 +51,7 @@ can_use_zarrs_write <- function(indexer, store) {
   if (inherits(store, "HttpStore")) return(FALSE)
   if (inherits(store, "S3Store")) return(FALSE)
   if (inherits(store, "GcsStore")) return(FALSE)
+  if (inherits(store, "IcechunkStore")) return(FALSE)  # read-only
   can_use_zarrs(indexer, store)
 }
 
@@ -70,6 +72,7 @@ can_use_zarrs_create <- function(store, dtype) {
   if (inherits(store, "HttpStore")) return(FALSE)  # read-only
   if (inherits(store, "S3Store")) return(FALSE)  # read-only for now
   if (inherits(store, "GcsStore")) return(FALSE)  # read-only for now
+  if (inherits(store, "IcechunkStore")) return(FALSE)  # read-only
   if (dtype$is_object) return(FALSE)
   if (dtype$basic_type %in% c("S", "U")) return(FALSE)
   TRUE

@@ -70,6 +70,42 @@ zarrs_get_key <- function(store_url, key) .Call(wrap__zarrs_get_key, store_url, 
 #' @export
 zarrs_close_store <- function(store_url) .Call(wrap__zarrs_close_store, store_url)
 
+#' List the direct children of a prefix in a store.
+#'
+#' Returns a named list with `keys` (child keys) and `prefixes` (child
+#' prefixes, without the trailing `/`), both relative to `prefix`. Used by
+#' `IcechunkStore$listdir()`; works for any listable store.
+#'
+#' # Errors
+#'
+#' Returns an R error if the store cannot be opened, cannot list (HTTP),
+#' or a storage I/O error occurs.
+#' @param store_url Filesystem path, URL or store identifier.
+#' @param prefix Prefix within the store, `""` for the root.
+#' @noRd
+zarrs_list_dir <- function(store_url, prefix) .Call(wrap__zarrs_list_dir, store_url, prefix)
+
+#' Open a read-only Icechunk session and cache it.
+#'
+#' Opens the repository at `url`, starts a read-only session at the
+#' given branch, tag or snapshot, and caches it under the returned store
+#' identifier (`icechunk+<url>@<kind>:<value>`). Always reopens, so a
+#' branch resolves to its current tip. Called by `IcechunkStore$new()`.
+#'
+#' # Errors
+#'
+#' Returns an R error for a bad URL or options, an unknown ref, a
+#' repository that cannot be opened, or a build without the `icechunk`
+#' feature.
+#' @param url Repository URL or local path.
+#' @param ref_kind One of `"branch"`, `"tag"`, `"snapshot"`.
+#' @param ref_value Branch or tag name, or snapshot id.
+#' @param storage_options_json JSON object of storage options.
+#' @param virtual_chunk_containers_json JSON object mapping container
+#'   prefixes to their options.
+#' @noRd
+zarrs_icechunk_open <- function(url, ref_kind, ref_value, storage_options_json, virtual_chunk_containers_json) .Call(wrap__zarrs_icechunk_open, url, ref_kind, ref_value, storage_options_json, virtual_chunk_containers_json)
+
 #' Open a zarrs array and return its metadata as an R list.
 #'
 #' Returns a named list with `shape`, `chunks`, `dtype`, `r_type`,

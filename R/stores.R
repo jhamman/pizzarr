@@ -928,3 +928,264 @@ GcsStore <- R6::R6Class("GcsStore",
     }
   )
 )
+
+#' @title IcechunkStore Class
+#' @docType class
+#' @description
+#' Reads an [Icechunk](https://icechunk.io) repository at a branch, tag or
+#' snapshot through the zarrs Rust backend. The store is read-only.
+#'
+#' @details
+#' `IcechunkStore` needs the zarrs backend built with the `icechunk`
+#' feature; check with `"icechunk" %in% pizzarr_compiled_features()`. There
+#' is no pure-R fallback, so on other builds `$new()` raises an error.
+#'
+#' Creating the store opens the repository and a read-only session. A
+#' branch is resolved to its tip at that moment; create a new store to see
+#' later commits. Array reads go through the zarrs fast path. Metadata and
+#' any selection the fast path does not handle are read key by key through
+#' the same session.
+#'
+#' `url` is a local path, or an `s3://`, `gs://`, `az://` or `https://`
+#' URL. `storage_options` is a named list. All entries are optional:
+#'
+#' \describe{
+#'   \item{`anonymous`}{`TRUE` for unsigned requests to a public bucket.}
+#'   \item{`region`, `endpoint_url`, `allow_http`, `force_path_style`}{S3
+#'     client settings. `endpoint_url` selects an S3-compatible service such
+#'     as MinIO; for GCS it sets the base URL.}
+#'   \item{`access_key_id`, `secret_access_key`, `session_token`}{Static S3
+#'     credentials. Without these or `anonymous`, credentials come from the
+#'     environment (`AWS_*` variables, profiles, instance metadata).}
+#'   \item{`service_account_file`, `service_account_key`,
+#'     `application_credentials`, `bearer_token`}{Static GCS credentials.
+#'     Without these, credentials come from the environment.}
+#'   \item{`account`, `access_key`, `sas_token`, `bearer_token`}{Azure
+#'     account (required for `az://`) and static credentials.}
+#' }
+#'
+#' Repositories with virtual chunks may only read from locations you
+#' authorize. `virtual_chunk_containers` is a named list whose names are URL
+#' prefixes ending in `/` (`"s3://bucket/data/"`, `"file:///data/"`,
+#' `"https://host/path/"`) and whose values are option lists, as for
+#' `storage_options`. A prefix the repository does not declare is added as
+#' a new container. Give a `name` to point the repository's named container
+#' (used by relative `vcc://name/...` references) at this prefix.
+#'
+#' Credentials that expire and need refreshing are not supported.
+#'
+#' @format [R6::R6Class] inheriting from [Store].
+#' @family Store classes
+#' @seealso `vignette("zarrs-backend")`.
+#' @examples
+#' \dontrun{
+#' store <- IcechunkStore$new(
+#'   "s3://my-bucket/path/to/repo", branch = "main",
+#'   storage_options = list(region = "us-west-2", anonymous = TRUE)
+#' )
+#' g <- zarr_open_group(store, mode = "r")
+#' x <- g$get_item("temperature")$get_item(list(slice(1, 10), "..."))$data
+#'
+#' IcechunkStore$new("/local/path/to/repo", tag = "v1.0")
+#' IcechunkStore$new("/local/path/to/repo", snapshot = "QNJSZ4TJK2G8B7KV1ND0")
+#'
+#' IcechunkStore$new(
+#'   "s3://bucket/repo",
+#'   virtual_chunk_containers = list(
+#'     "s3://noaa-source-bucket/" = list(anonymous = TRUE)
+#'   )
+#' )
+#' }
+#' @rdname IcechunkStore
+#' @export
+IcechunkStore <- R6::R6Class("IcechunkStore",
+  inherit = Store,
+  private = list(
+    url = NULL,
+    ref_kind = NULL,
+    ref_value = NULL,
+    storage_options_json = NULL,
+    containers_json = NULL,
+    id = NULL,
+    #' @keywords internal
+    open = function() {
+      private$id <- zarrs_icechunk_open(
+        private$url, private$ref_kind, private$ref_value,
+        private$storage_options_json, private$containers_json
+      )
+    },
+    # Run `f`, reopening the session once if it was closed with
+    # zarrs_close_store().
+    #' @keywords internal
+    with_session = function(f) {
+      tryCatch(f(), error = function(e) {
+        if (!grepl("session is not open", conditionMessage(e), fixed = TRUE)) {
+          stop(e)
+        }
+        private$open()
+        f()
+      })
+    },
+    #' @keywords internal
+    read_only_error = function(method) {
+      stop("IcechunkStore is read-only; ", method, "() is not supported.",
+           call. = FALSE)
+    }
+  ),
+  public = list(
+    #' @description
+    #' Open a read-only session on an Icechunk repository.
+    #' @param url Character. Local path or `s3://`, `gs://`, `az://` or
+    #'   `https://` URL of the repository.
+    #' @param branch,tag,snapshot Character. The version to read; give at
+    #'   most one. Defaults to `branch = "main"`.
+    #' @param storage_options Named list of storage and credential options.
+    #'   See Details.
+    #' @param virtual_chunk_containers Named list mapping virtual chunk URL
+    #'   prefixes to option lists. See Details.
+    #' @return A new `IcechunkStore` object.
+    initialize = function(url, branch = NULL, tag = NULL, snapshot = NULL,
+                          storage_options = list(),
+                          virtual_chunk_containers = list()) {
+      super$initialize()
+      if (!.pizzarr_env$zarrs_available ||
+          !("icechunk" %in% zarrs_compiled_features())) {
+        stop(
+          "IcechunkStore needs pizzarr's zarrs backend built with the ",
+          "'icechunk' feature, which this installation lacks.\n",
+          "  Install the r-universe binary:\n",
+          '    install.packages("pizzarr", ',
+          'repos = "https://zarr-developers.r-universe.dev")\n',
+          "  or build from source with PIZZARR_FEATURES=icechunk.",
+          call. = FALSE
+        )
+      }
+      if (!is.character(url) || length(url) != 1L || is.na(url) || !nzchar(url)) {
+        stop("url must be a single non-empty character string", call. = FALSE)
+      }
+      refs <- list(branch = branch, tag = tag, snapshot = snapshot)
+      refs <- refs[!vapply(refs, is.null, logical(1))]
+      if (length(refs) > 1L) {
+        stop("Give at most one of branch, tag or snapshot", call. = FALSE)
+      }
+      if (length(refs) == 0L) refs <- list(branch = "main")
+      value <- refs[[1]]
+      if (!is.character(value) || length(value) != 1L || is.na(value)) {
+        stop(names(refs), " must be a single character string", call. = FALSE)
+      }
+      private$url <- url
+      private$ref_kind <- names(refs)
+      private$ref_value <- value
+      private$storage_options_json <- icechunk_options_json(
+        storage_options, "storage_options"
+      )
+      private$containers_json <- icechunk_containers_json(
+        virtual_chunk_containers
+      )
+      private$writeable <- FALSE
+      private$erasable <- FALSE
+      private$store_version <- 3
+      private$open()
+    },
+    #' @description
+    #' Get an item from the store.
+    #' @param key The item key.
+    #' @return The item data in a vector of type raw.
+    get_item = function(key) {
+      value <- private$with_session(function() zarrs_get_key(private$id, key))
+      if (is.null(value)) stop("KeyError: ", key)
+      value
+    },
+    #' @description
+    #' Determine whether the store contains an item.
+    #' @param key The item key.
+    #' @return A boolean value.
+    contains_item = function(key) {
+      !is.null(private$with_session(function() zarrs_get_key(private$id, key)))
+    },
+    #' @description
+    #' Not supported: the store is read-only.
+    #' @param key The item key.
+    #' @param value The item value as a vector of type raw.
+    #' @return Never returns.
+    set_item = function(key, value) {
+      private$read_only_error("set_item")
+    },
+    #' @description
+    #' Not supported: the store is read-only.
+    #' @param key The item key.
+    #' @return Never returns.
+    delete_item = function(key) {
+      private$read_only_error("delete_item")
+    },
+    #' @description
+    #' List the children of a path.
+    #' @param path Character path, or `NA` for the root.
+    #' @return Sorted character vector of child keys and prefixes.
+    listdir = function(path = NA) {
+      prefix <- if (is_na(path)) "" else normalize_storage_path(path)
+      res <- private$with_session(function() zarrs_list_dir(private$id, prefix))
+      sort(unique(c(res$keys, res$prefixes)))
+    },
+    #' @description
+    #' Release the session held by the zarrs backend. Later reads reopen it.
+    #' @return `NULL` (invisibly).
+    close = function() {
+      zarrs_close_store(private$id)
+      invisible(NULL)
+    },
+    #' @description
+    #' Return the store identifier for zarrs dispatch, of the form
+    #' `icechunk+<url>@<kind>:<value>`.
+    #' @return A character string.
+    get_store_identifier = function() {
+      private$id
+    },
+    #' @description
+    #' Print a human-readable summary of the store.
+    #' @param ... Ignored.
+    #' @return `self` (invisibly).
+    print = function(...) {
+      cat(paste0("<IcechunkStore> ", private$url, " @ ", private$ref_kind,
+                 " ", private$ref_value, "\n"))
+      invisible(self)
+    }
+  )
+)
+
+# Encode an IcechunkStore option list as a JSON object.
+#' @keywords internal
+icechunk_options_json <- function(options, what) {
+  if (is.null(options) || length(options) == 0L) return("{}")
+  if (!is.list(options) || is.null(names(options)) || any(!nzchar(names(options)))) {
+    stop(what, " must be a named list", call. = FALSE)
+  }
+  bad <- !vapply(options, function(v) {
+    (is.character(v) || is.logical(v)) && length(v) == 1L && !is.na(v)
+  }, logical(1))
+  if (any(bad)) {
+    stop(what, " entries must be single strings or logicals: ",
+         paste(names(options)[bad], collapse = ", "), call. = FALSE)
+  }
+  as.character(jsonlite::toJSON(options, auto_unbox = TRUE))
+}
+
+# Encode virtual_chunk_containers (prefix -> option list) as a JSON object.
+#' @keywords internal
+icechunk_containers_json <- function(containers) {
+  if (is.null(containers) || length(containers) == 0L) return("{}")
+  if (!is.list(containers) || is.null(names(containers)) ||
+      any(!nzchar(names(containers)))) {
+    stop("virtual_chunk_containers must be a named list of option lists",
+         call. = FALSE)
+  }
+  parts <- vapply(names(containers), function(prefix) {
+    opts <- containers[[prefix]]
+    if (is.null(opts)) opts <- list()
+    paste0(
+      jsonlite::toJSON(prefix, auto_unbox = TRUE), ":",
+      icechunk_options_json(opts, paste0("virtual_chunk_containers$`", prefix, "`"))
+    )
+  }, character(1))
+  paste0("{", paste(parts, collapse = ","), "}")
+}
