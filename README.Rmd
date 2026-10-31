@@ -84,6 +84,8 @@ The build system uses two environment variables to control compilation:
   via `object_store` and `tokio`, which also pulls in blosc and sharding).
   Set this explicitly to override — e.g., `PIZZARR_FEATURES=none` for Cargo's
   default features only, or `PIZZARR_FEATURES=s3` for S3 without GCS.
+  `PIZZARR_FEATURES=s3,gcs,icechunk` adds read-only Icechunk repositories
+  (`IcechunkStore`); that feature needs rustc >= 1.95.
 
 A release build (no `DEBUG`) uses LTO, single codegen unit, and symbol
 stripping — fast at runtime but takes several minutes to compile from scratch.

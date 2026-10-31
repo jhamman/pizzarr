@@ -1,3 +1,20 @@
+# pizzarr 0.2.3-dev
+
+(developed with the assistance of Claude Opus 5.5)
+
+## Icechunk
+
+* New `IcechunkStore` reads [Icechunk](https://icechunk.io) repositories at a
+  branch, tag or snapshot through the zarrs backend: local paths, `s3://`,
+  `gs://`, `az://` and `https://` URLs, with static, environment or anonymous
+  credentials. Virtual chunks are read from the locations passed in
+  `virtual_chunk_containers`. The store is read-only and works with
+  `zarr_open()`, `zarr_open_group()` and `zarr_open_array()`.
+* It needs the new `icechunk` Cargo feature (`PIZZARR_FEATURES=s3,gcs,icechunk`,
+  rustc >= 1.95), which adds the `icechunk` and `zarrs_icechunk` crates. Default
+  builds and the CRAN tier are unchanged. `pizzarr_compiled_features()` reports
+  `"icechunk"` when it is compiled in.
+
 # pizzarr 0.2.2
 
 (developed with the assistance of Claude Opus 5.5)

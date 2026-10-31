@@ -515,6 +515,42 @@ Cloud stores are read-only through zarrs. Credentials, alternate endpoints
 `storage_options`, and the differences between the `s3://` and HTTPS routes are
 covered in `vignette("remote-stores")`.
 
+## Icechunk repositories
+
+[Icechunk](https://icechunk.io) adds version control (branches, tags,
+snapshots) and virtual chunks to Zarr V3. When pizzarr is built with the
+`icechunk` feature, `IcechunkStore` reads a repository at a branch, tag or
+snapshot through the zarrs backend. The store is read-only, and there is no
+pure-R fallback. The feature is off by default and needs rustc >= 1.95; build
+with `PIZZARR_FEATURES=s3,gcs,icechunk`.
+
+```{r, eval=has_zarrs && ("icechunk" %in% pizzarr_compiled_features())}
+ic_dir <- tempfile("icechunk_")
+utils::unzip(system.file("extdata/fixtures/icechunk/icechunk.zip",
+                         package = "pizzarr"), exdir = ic_dir)
+
+store <- IcechunkStore$new(file.path(ic_dir, "basic.icechunk"), tag = "v1")
+store$get_store_identifier()
+
+g <- zarr_open_group(store, mode = "r")
+g$get_item("version")$get_item("...")$data
+```
+
+`url` can also be an `s3://`, `gs://`, `az://` or `https://` URL, with
+`storage_options` such as `region`, `endpoint_url`, `anonymous = TRUE` or
+static credentials. Virtual chunks are read only from locations you
+authorize, with credentials per URL prefix:
+
+```{r, eval=FALSE}
+IcechunkStore$new("s3://bucket/repo", branch = "main",
+                  storage_options = list(region = "us-west-2"),
+                  virtual_chunk_containers = list(
+                    "s3://noaa-source-bucket/" = list(anonymous = TRUE)
+                  ))
+```
+
+See `?IcechunkStore` for every option.
+
 ## C/F order handling
 
 zarrs stores data in C-order (row-major), while R uses F-order (column-major).
